@@ -31,13 +31,18 @@ const trackedWidgets = new Set(); // all auth widgets
 
 const modelCache = {}; // folder -> { models: [...], values: [...], baseModels: [...] }
 
+function modelComboValue(m) {
+    const vid = m.versionId;
+    return vid ? `${m.id}@${vid}:${m.name}` : `${m.id}:${m.name}`;
+}
+
 function getCacheValues(folder, baseModel) {
     const cache = modelCache[folder];
     if (!cache) return [];
     if (!baseModel || baseModel === "All") return cache.values;
     return cache.models
         .filter(m => m.baseModel === baseModel)
-        .map(m => `${m.id}:${m.name}`);
+        .map(modelComboValue);
 }
 
 function getBaseModelOptions(folder) {
@@ -55,7 +60,7 @@ async function refreshModels(folder) {
             const models = data.models;
             modelCache[folder] = {
                 models,
-                values: models.map(m => `${m.id}:${m.name}`),
+                values: models.map(modelComboValue),
                 baseModels: [...new Set(models.map(m => m.baseModel).filter(Boolean))].sort(),
             };
         }
@@ -461,7 +466,7 @@ function buildGroupedLoraMenu(models, onSelect) {
     if (groupNames.length <= 1) {
         // No grouping needed — flat list
         for (const m of models) {
-            const value = `${m.id}:${m.name}`;
+            const value = modelComboValue(m);
             rootItems.push({
                 content: m.name,
                 callback: () => onSelect(value),
@@ -470,7 +475,7 @@ function buildGroupedLoraMenu(models, onSelect) {
     } else {
         for (const group of groupNames) {
             const submenu = groups[group].map(m => {
-                const value = `${m.id}:${m.name}`;
+                const value = modelComboValue(m);
                 return {
                     content: m.name,
                     callback: () => onSelect(value),
@@ -585,8 +590,8 @@ function createLoraWidget(node, index, initialValue) {
         const savedAlpha = ctx.globalAlpha;
         if (!on) ctx.globalAlpha = 0.4;
 
-        // LoRA name — extract name after "id:" prefix
-        const rawName = v.lora === "None" ? "None" : v.lora.split(":").slice(1).join(":");
+        // LoRA name — extract name after "id@vid:" or "id:" prefix
+        const rawName = v.lora === "None" ? "None" : v.lora.replace(/^[^:]*:/, "");
         ctx.fillStyle = on ? (LiteGraph.WIDGET_TEXT_COLOR || "#ddd") : "#666";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "left";

@@ -92,6 +92,54 @@ def _default_cache_dir():
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
 # ---------------------------------------------------------------------------
+# Version expansion
+# ---------------------------------------------------------------------------
+
+def _expand_versions(raw_models):
+    """Expand a list of models into one entry per local version.
+
+    For models with one local version the display name is just the model name.
+    For models with multiple local versions: "ModelName - VersionName".
+    Models without a versions array fall back to a single entry.
+    """
+    expanded = []
+    for model in raw_models:
+        versions = model.get("versions")
+        if not versions:
+            # No version data — use model as-is (single entry, no versionId)
+            expanded.append({
+                "id": model["id"],
+                "versionId": None,
+                "name": model["name"],
+                "modelName": model["name"],
+                "versionName": None,
+                "baseModel": model.get("baseModel"),
+            })
+            continue
+
+        local_versions = [v for v in versions if v.get("isLocal")]
+        if not local_versions:
+            continue
+
+        multi = len(local_versions) > 1
+        for v in local_versions:
+            display_name = (
+                f"{model['name']} - {v['name']}" if multi
+                else model["name"]
+            )
+            expanded.append({
+                "id": model["id"],
+                "versionId": v["id"],
+                "name": display_name,
+                "modelName": model["name"],
+                "versionName": v["name"],
+                "baseModel": v.get("baseModel") or model.get("baseModel"),
+            })
+
+    return expanded
+
+
+# ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
 
@@ -219,7 +267,11 @@ class ModelManagerClient:
     # -- model operations ---------------------------------------------------
 
     def list_models(self, folder):
-        """List models for a folder category. Returns list of model dicts."""
+        """List models for a folder category, expanded by version.
+
+        Returns a list of dicts, one per local version:
+            {id, versionId, name, modelName, versionName, baseModel, ...}
+        """
         if folder in self._model_cache:
             return self._model_cache[folder]
 
@@ -227,46 +279,54 @@ class ModelManagerClient:
         if not category:
             raise ModelManagerError(f"Unknown folder: {folder}")
 
-        all_models = []
+        raw_models = []
         page = 1
         while True:
             resp = self._request("GET", "/api/v1/models", params={
                 "category": category,
+                "include": "versions",
                 "limit": 100,
                 "page": page,
             })
             data = resp.json()
-            models = data.get("items", [])
-            all_models.extend(models)
+            raw_models.extend(data.get("items", []))
 
             if not data.get("hasMore", False):
                 break
             page += 1
 
-        self._model_cache[folder] = all_models
-        return all_models
+        expanded = _expand_versions(raw_models)
+        self._model_cache[folder] = expanded
+        return expanded
 
     def get_model(self, model_id):
         """Fetch full details for a single model."""
         resp = self._request("GET", f"/api/v1/models/{model_id}")
         return resp.json()
 
-    def download_model(self, model_id, folder, progress_callback=None):
+    def download_model(self, model_id, folder, version_id=None, progress_callback=None):
         """Download a model file. Returns the local cache path.
-        Checks cache first by model_id prefix in the folder."""
+
+        Uses "{model_id}_{version_id}_" as the cache prefix so each version
+        is cached independently.
+        """
         cache_folder = os.path.join(self._cache_dir, folder)
         os.makedirs(cache_folder, exist_ok=True)
 
-        # Check cache: look for files starting with "{model_id}_"
-        prefix = f"{model_id}_"
+        # Build cache prefix including version when available
+        prefix = f"{model_id}_{version_id}_" if version_id else f"{model_id}_"
         for existing in os.listdir(cache_folder):
             if existing.startswith(prefix):
                 local_path = os.path.join(cache_folder, existing)
                 logger.info(f"Cache hit: {local_path}")
                 return local_path
 
-        # Stream download — get filename from content-disposition header
-        resp = self._request("GET", f"/api/v1/models/{model_id}/download", stream=True, timeout=600)
+        # Stream download — pass versionId when available
+        params = {"versionId": version_id} if version_id else None
+        resp = self._request(
+            "GET", f"/api/v1/models/{model_id}/download",
+            params=params, stream=True, timeout=600,
+        )
         resp.raise_for_status()
 
         # Extract filename from content-disposition header
@@ -280,7 +340,10 @@ class ModelManagerClient:
         if not filename:
             filename = f"model_{model_id}.safetensors"
         safe_filename = re.sub(r'[^\w\-.]', '_', filename)
-        cache_name = f"{model_id}_{safe_filename}"
+        cache_name = (
+            f"{model_id}_{version_id}_{safe_filename}" if version_id
+            else f"{model_id}_{safe_filename}"
+        )
         local_path = os.path.join(cache_folder, cache_name)
 
         total_size = int(resp.headers.get("Content-Length", 0))

@@ -27,7 +27,7 @@ class FlexibleOptionalInputType(dict):
 # ---------------------------------------------------------------------------
 
 def _get_model_list(folder):
-    """Fetch model list from Model Manager, formatted as 'id:name' strings."""
+    """Fetch model list from Model Manager, formatted as 'modelId@versionId:name' strings."""
     try:
         client = get_client()
         if not client.authenticated:
@@ -35,22 +35,42 @@ def _get_model_list(folder):
         models = client.list_models(folder)
         if not models:
             return ["(no models found)"]
-        return [f"{m['id']}:{m['name']}" for m in models]
+        return [_model_combo_value(m) for m in models]
     except ModelManagerAuthError:
         return ["(not connected)"]
     except Exception as e:
         logger.warning(f"Failed to list models in {folder}: {e}")
         return ["(error loading models)"]
 
+
+def _model_combo_value(m):
+    """Build a combo string from a model dict: 'modelId@versionId:name'."""
+    mid = m["id"]
+    vid = m.get("versionId")
+    name = m["name"]
+    return f"{mid}@{vid}:{name}" if vid else f"{mid}:{name}"
+
+
 def _parse_model_value(value):
-    """Extract integer model ID from an 'id:name' string."""
+    """Extract (model_id, version_id) from a 'modelId@versionId:name' string.
+
+    Returns (int, int|None) or (None, None) on failure.
+    """
     if not value or value.startswith("("):
-        return None
-    parts = value.split(":", 1)
+        return None, None
+    id_part = value.split(":", 1)[0]
+    if "@" in id_part:
+        mid_str, vid_str = id_part.split("@", 1)
+        try:
+            mid = int(mid_str)
+            vid = int(vid_str) if vid_str and vid_str != "None" else None
+            return mid, vid
+        except ValueError:
+            return None, None
     try:
-        return int(parts[0])
-    except (ValueError, IndexError):
-        return None
+        return int(id_part), None
+    except ValueError:
+        return None, None
 
 # ---------------------------------------------------------------------------
 # Checkpoint Loader
@@ -78,7 +98,7 @@ class ModelManagerCheckpointLoader:
         import comfy.sd
         import comfy.utils
 
-        model_id = _parse_model_value(ckpt_name)
+        model_id, version_id = _parse_model_value(ckpt_name)
         if model_id is None:
             raise ValueError(f"Invalid model selection: {ckpt_name}")
 
@@ -86,7 +106,7 @@ class ModelManagerCheckpointLoader:
         pbar = comfy.utils.ProgressBar(100)
         def on_progress(downloaded, total):
             pbar.update_absolute(int(downloaded * 100 / total), 100)
-        local_path = client.download_model(model_id, "checkpoints", progress_callback=on_progress)
+        local_path = client.download_model(model_id, "checkpoints", version_id=version_id, progress_callback=on_progress)
         return comfy.sd.load_checkpoint_guess_config(local_path)[:3]
 
 # ---------------------------------------------------------------------------
@@ -126,7 +146,7 @@ class ModelManagerLoRALoader:
         import comfy.sd
 
         if self.loaded_lora_name != lora_name:
-            model_id = _parse_model_value(lora_name)
+            model_id, version_id = _parse_model_value(lora_name)
             if model_id is None:
                 raise ValueError(f"Invalid LoRA selection: {lora_name}")
 
@@ -134,7 +154,7 @@ class ModelManagerLoRALoader:
             pbar = comfy.utils.ProgressBar(100)
             def on_progress(downloaded, total):
                 pbar.update_absolute(int(downloaded * 100 / total), 100)
-            local_path = client.download_model(model_id, "loras", progress_callback=on_progress)
+            local_path = client.download_model(model_id, "loras", version_id=version_id, progress_callback=on_progress)
             self.loaded_lora = comfy.utils.load_torch_file(local_path, safe_load=True)
             self.loaded_lora_name = lora_name
 
@@ -200,7 +220,7 @@ class ModelManagerMultiLoRALoader:
                 strength_clip = 0
 
             if lora_name not in self.loaded_loras:
-                model_id = _parse_model_value(lora_name)
+                model_id, version_id = _parse_model_value(lora_name)
                 if model_id is None:
                     logger.warning(f"Skipping invalid LoRA value: {lora_name}")
                     continue
@@ -209,7 +229,7 @@ class ModelManagerMultiLoRALoader:
                 pbar = comfy.utils.ProgressBar(100)
                 def on_progress(downloaded, total):
                     pbar.update_absolute(int(downloaded * 100 / total), 100)
-                local_path = client.download_model(model_id, "loras", progress_callback=on_progress)
+                local_path = client.download_model(model_id, "loras", version_id=version_id, progress_callback=on_progress)
                 self.loaded_loras[lora_name] = comfy.utils.load_torch_file(local_path, safe_load=True)
 
             if strength_model != 0 or strength_clip != 0:
@@ -245,7 +265,7 @@ class ModelManagerVAELoader:
         import comfy.utils
         import comfy.sd
 
-        model_id = _parse_model_value(vae_name)
+        model_id, version_id = _parse_model_value(vae_name)
         if model_id is None:
             raise ValueError(f"Invalid VAE selection: {vae_name}")
 
@@ -253,7 +273,7 @@ class ModelManagerVAELoader:
         pbar = comfy.utils.ProgressBar(100)
         def on_progress(downloaded, total):
             pbar.update_absolute(int(downloaded * 100 / total), 100)
-        local_path = client.download_model(model_id, "vae", progress_callback=on_progress)
+        local_path = client.download_model(model_id, "vae", version_id=version_id, progress_callback=on_progress)
         sd = comfy.utils.load_torch_file(local_path)
         return (comfy.sd.VAE(sd=sd),)
 
