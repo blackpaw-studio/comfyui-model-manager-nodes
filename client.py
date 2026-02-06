@@ -236,7 +236,7 @@ class ModelManagerClient:
                 "page": page,
             })
             data = resp.json()
-            models = data.get("models", data.get("data", []))
+            models = data.get("items", [])
             all_models.extend(models)
 
             if not data.get("hasMore", False):
@@ -265,16 +265,23 @@ class ModelManagerClient:
                 logger.info(f"Cache hit: {local_path}")
                 return local_path
 
-        # Fetch model details for the filename
-        model_info = self.get_model(model_id)
-        filename = model_info.get("fileName", model_info.get("name", f"model_{model_id}"))
+        # Stream download — get filename from content-disposition header
+        resp = self._request("GET", f"/api/v1/models/{model_id}/download", stream=True, timeout=600)
+        resp.raise_for_status()
+
+        # Extract filename from content-disposition header
+        cd = resp.headers.get("content-disposition", "")
+        filename = None
+        if "filename=" in cd:
+            # Parse filename="value" or filename=value
+            match = re.search(r'filename="?([^";\n]+)"?', cd)
+            if match:
+                filename = match.group(1).strip()
+        if not filename:
+            filename = f"model_{model_id}.safetensors"
         safe_filename = re.sub(r'[^\w\-.]', '_', filename)
         cache_name = f"{model_id}_{safe_filename}"
         local_path = os.path.join(cache_folder, cache_name)
-
-        # Stream download
-        resp = self._request("GET", f"/api/v1/models/{model_id}/download", stream=True, timeout=600)
-        resp.raise_for_status()
 
         total_size = int(resp.headers.get("Content-Length", 0))
         downloaded = 0
