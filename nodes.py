@@ -155,8 +155,8 @@ class ModelManagerCheckpointLoader:
 # ---------------------------------------------------------------------------
 
 class ModelManagerLoRALoader:
-    RETURN_TYPES = ("MODEL", "CLIP", "MM_LORA_INFO")
-    RETURN_NAMES = ("model", "clip", "lora_info")
+    RETURN_TYPES = ("MODEL", "CLIP", "MM_LORA_INFO", any_type)
+    RETURN_NAMES = ("model", "clip", "lora_info", "model_ref")
     FUNCTION = "load"
     CATEGORY = "loaders/model-manager"
 
@@ -211,7 +211,7 @@ class ModelManagerLoRALoader:
             "strength": strength_model,
         })
 
-        return (model_out, clip_out, info)
+        return (model_out, clip_out, info, lora_name)
 
 # ---------------------------------------------------------------------------
 # Multi-LoRA Loader (Power LoRA style)

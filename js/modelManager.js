@@ -1241,12 +1241,21 @@ app.registerExtension({
                     };
                 }
 
-                // Ensure LiteGraph sees these as "*" so combo outputs can connect
+                // Ensure LiteGraph sees these as "*" so any output can connect
                 for (const input of (node.inputs || [])) {
-                    if (input.name === "sampler" || input.name === "scheduler") {
+                    if (["sampler", "scheduler", "model_name"].includes(input.name)) {
                         input.type = "*";
                     }
                 }
+
+                // Also handle model_name when it's later converted to input
+                const origOnInputAdded = node.onInputAdded;
+                node.onInputAdded = function (input) {
+                    if (origOnInputAdded) origOnInputAdded.call(this, input);
+                    if (input.name === "model_name") {
+                        input.type = "*";
+                    }
+                };
             }
 
             // --- Auth button ---
