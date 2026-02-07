@@ -440,6 +440,7 @@ class ModelManagerImageUpload:
             },
             "hidden": {
                 "extra_pnginfo": "EXTRA_PNGINFO",
+                "comfy_prompt": "PROMPT",
             },
         }
 
@@ -453,7 +454,7 @@ class ModelManagerImageUpload:
 
     def upload(self, images, upload_to, model_name, version_specific, lora_info=None,
                prompt="", negative_prompt="", seed=0, steps=0, cfg_scale=0.0,
-               sampler="", scheduler="", extra_pnginfo=None):
+               sampler="", scheduler="", extra_pnginfo=None, comfy_prompt=None):
         model_id, version_id = _parse_model_value(model_name)
         if not version_specific:
             version_id = None
@@ -464,10 +465,12 @@ class ModelManagerImageUpload:
         if not client.authenticated:
             return ("Error: not connected to Model Manager",)
 
-        # Build workflow JSON from extra_pnginfo
+        # Build workflow JSON — prefer EXTRA_PNGINFO (web UI), fall back to PROMPT (API)
         workflow_json = None
         if extra_pnginfo and isinstance(extra_pnginfo, dict):
             workflow_json = extra_pnginfo.get("workflow")
+        if not workflow_json and comfy_prompt and isinstance(comfy_prompt, dict):
+            workflow_json = comfy_prompt
 
         results = []
         for i in range(images.shape[0]):
