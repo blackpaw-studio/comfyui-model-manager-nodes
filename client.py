@@ -367,6 +367,55 @@ class ModelManagerClient:
         logger.info(f"Downloaded model {model_id} -> {local_path}")
         return local_path
 
+    def upload_image(self, model_id, image_data, filename, metadata=None):
+        """Upload an image with generation metadata to a model.
+
+        Args:
+            model_id: integer model ID
+            image_data: bytes of the image file (PNG/JPEG)
+            filename: display filename (e.g. "comfyui_00001.png")
+            metadata: dict with optional keys — prompt, negativePrompt, seed,
+                      steps, cfgScale, sampler, scheduler, nsfwLevel, loras,
+                      comfyWorkflow
+        Returns:
+            The created image dict from the API.
+        """
+        import json as _json
+
+        if not self._api_url or not self._api_key:
+            raise ModelManagerAuthError("Not connected — please connect first")
+
+        url = f"{self._api_url}/api/v1/models/{model_id}/images"
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+
+        files = {"file": (filename, image_data, "image/png")}
+        data = {}
+        if metadata:
+            for key, value in metadata.items():
+                if value is None:
+                    continue
+                if isinstance(value, (dict, list)):
+                    data[key] = _json.dumps(value)
+                elif isinstance(value, bool):
+                    data[key] = str(value).lower()
+                else:
+                    data[key] = str(value)
+
+        resp = requests.post(url, headers=headers, files=files, data=data, timeout=120)
+
+        if resp.status_code == 401:
+            self._validated = False
+            raise ModelManagerAuthError("Invalid or expired API key")
+        if not resp.ok:
+            try:
+                msg = resp.json().get("error", resp.text)
+            except Exception:
+                msg = resp.text
+            raise ModelManagerAPIError(f"Upload failed ({resp.status_code}): {msg}", code=resp.status_code)
+
+        logger.info(f"Uploaded image to model {model_id}")
+        return resp.json()
+
     def refresh_models(self):
         """Clear the in-memory model list cache so the next list_models call re-fetches."""
         self._model_cache.clear()

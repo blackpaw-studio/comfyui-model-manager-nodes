@@ -1,5 +1,9 @@
+import io
 import os
+import json
 import logging
+import numpy as np
+from PIL import Image
 from .client import get_client, ModelManagerAuthError
 
 logger = logging.getLogger("comfyui-model-manager")
@@ -316,3 +320,123 @@ class ModelManagerClearCache:
         freed = client.clear_cache()
         freed_mb = freed / (1024 * 1024)
         return (f"Cleared {freed_mb:.1f} MB",)
+
+# ---------------------------------------------------------------------------
+# Image Upload
+# ---------------------------------------------------------------------------
+
+def _get_all_model_list():
+    """Fetch all models across every category, deduplicated by model ID."""
+    try:
+        client = get_client()
+        if not client.authenticated:
+            return ["(not connected)"]
+        all_models = []
+        for folder in ("checkpoints", "loras", "vae"):
+            try:
+                all_models.extend(client.list_models(folder))
+            except Exception:
+                continue
+        if not all_models:
+            return ["(no models found)"]
+        seen = set()
+        unique = []
+        for m in all_models:
+            mid = m["id"]
+            if mid not in seen:
+                seen.add(mid)
+                unique.append(f"{mid}:{m.get('modelName', m['name'])}")
+        return unique
+    except ModelManagerAuthError:
+        return ["(not connected)"]
+    except Exception as e:
+        logger.warning(f"Failed to list all models: {e}")
+        return ["(error loading models)"]
+
+
+class ModelManagerImageUpload:
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("status",)
+    FUNCTION = "upload"
+    CATEGORY = "loaders/model-manager"
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "model_name": (_get_all_model_list(),),
+            },
+            "optional": {
+                "prompt": ("STRING", {"default": "", "multiline": True, "forceInput": True}),
+                "negative_prompt": ("STRING", {"default": "", "multiline": True, "forceInput": True}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+                "steps": ("INT", {"default": 0, "min": 0, "max": 10000, "forceInput": True}),
+                "cfg_scale": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step": 0.1, "forceInput": True}),
+                "sampler": ("STRING", {"default": "", "forceInput": True}),
+                "scheduler": ("STRING", {"default": "", "forceInput": True}),
+            },
+            "hidden": {
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    def upload(self, images, model_name, prompt="", negative_prompt="",
+               seed=0, steps=0, cfg_scale=0.0, sampler="", scheduler="",
+               extra_pnginfo=None):
+        model_id, _ = _parse_model_value(model_name)
+        if model_id is None:
+            return ("Error: invalid model selection",)
+
+        client = get_client()
+        if not client.authenticated:
+            return ("Error: not connected to Model Manager",)
+
+        # Build workflow JSON from extra_pnginfo
+        workflow_json = None
+        if extra_pnginfo and isinstance(extra_pnginfo, dict):
+            workflow_json = extra_pnginfo.get("workflow")
+
+        results = []
+        for i in range(images.shape[0]):
+            # Convert IMAGE tensor (B,H,W,C float32 0-1) to PNG bytes
+            img_array = (images[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            pil_img = Image.fromarray(img_array)
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            image_bytes = buf.getvalue()
+
+            metadata = {}
+            if prompt:
+                metadata["prompt"] = prompt
+            if negative_prompt:
+                metadata["negativePrompt"] = negative_prompt
+            if seed:
+                metadata["seed"] = seed
+            if steps:
+                metadata["steps"] = steps
+            if cfg_scale:
+                metadata["cfgScale"] = cfg_scale
+            if sampler:
+                metadata["sampler"] = sampler
+            if scheduler:
+                metadata["scheduler"] = scheduler
+            if workflow_json:
+                metadata["comfyWorkflow"] = workflow_json
+
+            try:
+                result = client.upload_image(
+                    model_id, image_bytes, f"comfyui_{i:05d}.png", metadata,
+                )
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Failed to upload image {i} to model {model_id}: {e}")
+                return (f"Error uploading image {i}: {e}",)
+
+        count = len(results)
+        return (f"Uploaded {count} image{'s' if count != 1 else ''} to model {model_id}",)
