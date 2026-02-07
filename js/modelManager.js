@@ -1226,6 +1226,27 @@ app.registerExtension({
                     // Initialize combo values from cache
                     updateNodeCombo(node);
                 }
+
+                // Fix workflow restore: base_model (serialize=false) inserted before
+                // lora_name shifts widget indices, causing configure() to assign saved
+                // values to the wrong widgets.
+                const origConfigure = node.configure;
+                node.configure = function (info) {
+                    // Temporarily remove base_model so configure maps values correctly
+                    const bmIdx = node.widgets.findIndex(w => w.name === "base_model");
+                    let bmWidget = null;
+                    if (bmIdx >= 0) {
+                        bmWidget = node.widgets.splice(bmIdx, 1)[0];
+                    }
+
+                    origConfigure?.call(this, info);
+
+                    // Re-insert base_model before lora_name
+                    if (bmWidget) {
+                        const lnIdx = node.widgets.findIndex(w => w.name === "lora_name");
+                        node.widgets.splice(lnIdx >= 0 ? lnIdx : 0, 0, bmWidget);
+                    }
+                };
             }
 
             // --- Upload Image node setup ---
