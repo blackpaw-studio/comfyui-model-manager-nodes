@@ -91,9 +91,20 @@ function updateAllNodeCombos() {
     app.graph.setDirtyCanvas(true, true);
 }
 
+function getUploadFolder(node) {
+    const uploadTo = node.widgets?.find(w => w.name === "upload_to");
+    return uploadTo?.value === "LoRA" ? "loras" : "diffusion_models";
+}
+
 function updateNodeCombo(node) {
-    const folder = NODE_FOLDER_MAP[node.type];
+    let folder = NODE_FOLDER_MAP[node.type];
     if (!folder) return;
+
+    // Upload node: folder depends on upload_to toggle
+    if (node.type === "ModelManagerImageUpload") {
+        folder = getUploadFolder(node);
+    }
+
     if (!modelCache[folder]) return;
 
     // Update base_model widget options (if present)
@@ -1217,8 +1228,19 @@ app.registerExtension({
                 }
             }
 
-            // --- Upload Image: force wildcard type on metadata inputs ---
+            // --- Upload Image node setup ---
             if (isUploadNode) {
+                // Swap model_name values when upload_to changes
+                const uploadToWidget = node.widgets?.find(w => w.name === "upload_to");
+                if (uploadToWidget) {
+                    const origCallback = uploadToWidget.callback;
+                    uploadToWidget.callback = function (value) {
+                        if (origCallback) origCallback.call(this, value);
+                        updateNodeCombo(node);
+                        node.setDirtyCanvas(true);
+                    };
+                }
+
                 // Ensure LiteGraph sees these as "*" so combo outputs can connect
                 for (const input of (node.inputs || [])) {
                     if (input.name === "sampler" || input.name === "scheduler") {

@@ -395,6 +395,7 @@ class ModelManagerImageUpload:
         return {
             "required": {
                 "images": ("IMAGE",),
+                "upload_to": (["Diffusion Model", "LoRA"],),
                 "model_name": (_get_model_list("diffusion_models"),),
             },
             "optional": {
@@ -420,7 +421,7 @@ class ModelManagerImageUpload:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def upload(self, images, model_name, lora_info=None, prompt="",
+    def upload(self, images, upload_to, model_name, lora_info=None, prompt="",
                negative_prompt="", seed=0, steps=0, cfg_scale=0.0,
                sampler="", scheduler="", extra_pnginfo=None):
         model_id, _ = _parse_model_value(model_name)
