@@ -6,7 +6,7 @@ const NODE_FOLDER_MAP = {
     ModelManagerCheckpointLoader: "checkpoints",
     ModelManagerLoRALoader: "loras",
     ModelManagerMultiLoRALoader: "loras",
-    ModelManagerLoRASelector: "loras",
+    ModelManagerLoRADownload: "loras",
     ModelManagerVAELoader: "vae",
     ModelManagerClearCache: null,
     ModelManagerImageUpload: "diffusion_models",
@@ -1161,7 +1161,7 @@ app.registerExtension({
         const folderKey = NODE_FOLDER_MAP[nodeData.name];
         const isMultiLoraNode = nodeData.name === "ModelManagerMultiLoRALoader";
         const isSingleLoraNode = nodeData.name === "ModelManagerLoRALoader";
-        const isLoraSelector = nodeData.name === "ModelManagerLoRASelector";
+        const isLoraSelector = nodeData.name === "ModelManagerLoRADownload";
         const isUploadNode = nodeData.name === "ModelManagerImageUpload";
 
         // Register the showStrengths property for the multi-LoRA node

@@ -380,13 +380,13 @@ class ModelManagerClearCache:
         return (f"Cleared {freed_mb:.1f} MB",)
 
 # ---------------------------------------------------------------------------
-# LoRA Selector
+# LoRA Download
 # ---------------------------------------------------------------------------
 
-class ModelManagerLoRASelector:
+class ModelManagerLoRADownload:
     RETURN_TYPES = (any_type,)
     RETURN_NAMES = ("lora_name",)
-    FUNCTION = "select"
+    FUNCTION = "download"
     CATEGORY = "loaders/model-manager"
 
     @classmethod
@@ -401,8 +401,79 @@ class ModelManagerLoRASelector:
     def IS_CHANGED(cls, lora_name):
         return get_client().version
 
-    def select(self, lora_name):
-        return (lora_name,)
+    def download(self, lora_name):
+        import re as _re
+        import folder_paths
+
+        model_id, version_id = _parse_model_value(lora_name)
+        if model_id is None:
+            raise ValueError(f"Invalid LoRA selection: {lora_name}")
+
+        # Get the standard ComfyUI loras directory
+        lora_dirs = folder_paths.get_folder_paths("loras")
+        if not lora_dirs:
+            raise ValueError("No loras folder configured in ComfyUI")
+        lora_dir = lora_dirs[0]
+        os.makedirs(lora_dir, exist_ok=True)
+
+        # Check if already downloaded (by model_id prefix)
+        prefix = f"{model_id}_{version_id}_" if version_id else f"{model_id}_"
+        for existing in os.listdir(lora_dir):
+            if existing.startswith(prefix):
+                logger.info(f"LoRA already downloaded: {existing}")
+                return (existing,)
+
+        # Download via the client (streams the file)
+        client = get_client()
+        import comfy.utils
+        pbar = comfy.utils.ProgressBar(100)
+        def on_progress(downloaded, total):
+            pbar.update_absolute(int(downloaded * 100 / total), 100)
+
+        # Use the client's download logic but target the loras dir
+        params = {"versionId": version_id} if version_id else None
+        resp = client._request(
+            "GET", f"/api/v1/models/{model_id}/download",
+            params=params, stream=True, timeout=600,
+        )
+        resp.raise_for_status()
+
+        # Extract filename from content-disposition
+        cd = resp.headers.get("content-disposition", "")
+        filename = None
+        if "filename=" in cd:
+            match = _re.search(r'filename="?([^";\n]+)"?', cd)
+            if match:
+                filename = match.group(1).strip()
+        if not filename:
+            filename = f"model_{model_id}.safetensors"
+        safe_filename = _re.sub(r'[^\w\-.]', '_', filename)
+        final_name = (
+            f"{model_id}_{version_id}_{safe_filename}" if version_id
+            else f"{model_id}_{safe_filename}"
+        )
+        local_path = os.path.join(lora_dir, final_name)
+
+        total_size = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+
+        tmp_path = local_path + ".tmp"
+        try:
+            with open(tmp_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            on_progress(downloaded, total_size)
+            os.rename(tmp_path, local_path)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+
+        logger.info(f"Downloaded LoRA to {local_path}")
+        return (final_name,)
 
 # ---------------------------------------------------------------------------
 # Merge LoRA Info
